@@ -44,6 +44,8 @@ BRANCH = "main"
 
 # Files to ship on top of what's already on GitHub:
 #   - new files (kit/0.1.1)
+#   - the dist/ tree in full (push-v0.1.py + sync-multica-to-agentpulse.py are
+#     referenced by Makefile / README)
 #   - README.md (updated to lead with quickstart)
 # Paths are repo-relative (no leading "./").
 NEW_FILES = [
@@ -52,7 +54,9 @@ NEW_FILES = [
     "Makefile",
     ".env.example",
     "CHANGELOG.md",
-    "README.md", "dist/push-v0.1.py",
+    "README.md",
+    "dist/sync-multica-to-agentpulse.py",
+    "dist/push-v0.1.py",
 ]
 
 # Files to explicitly NOT touch (left as-is on main):
