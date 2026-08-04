@@ -46,7 +46,7 @@ verify:  ## confirm multica + openclaw + daemon are wired
 	@echo "==> .env"
 	@if [[ -f .env ]]; then echo "  ✓ present"; else echo "  ✗ missing — cp .env.example .env"; fi
 	@echo "==> workspace"
-	@if [[ -n "$$MULTICA_WORKSPACE_ID" ]]; then echo "  ✓ $$MULTICA_WORKSPACE_ID"; else echo "  ✗ MULTICA_WORKSPACE_ID not set"; fi
+	@if [[ -n "${MULTICA_WORKSPACE_ID:-}" ]]; then echo "  ✓ $MULTICA_WORKSPACE_ID"; else echo "  ✗ MULTICA_WORKSPACE_ID not set"; fi
 
 demo:  ## create a test issue, watch it route, post a comment, sync to AgentPulse
 	@bash -c 'set -e; \
