@@ -106,9 +106,20 @@ else
   run npm install -g openclaw@latest
 fi
 
-# Initialize the openclaw runtime (idempotent)
-run openclaw init --model "$OPENCLAW_MODEL_DEFAULT" || true
-run openclaw config set --key default_model --value "$OPENCLAW_MODEL_DEFAULT" || true
+# Initialize the openclaw runtime (idempotent — only run if no config exists yet).
+if [[ -f "$HOME/.openclaw/openclaw.json" ]]; then
+  echo "  ✓ openclaw already initialized (config at \$HOME/.openclaw/openclaw.json)"
+  # Only update the default model if it's different from what's already set.
+  CURRENT_MODEL=$(openclaw config get --key default_model 2>/dev/null | tr -d '\n' || true)
+  if [[ "$CURRENT_MODEL" != "$OPENCLAW_MODEL_DEFAULT" ]]; then
+    run openclaw config set --key default_model --value "$OPENCLAW_MODEL_DEFAULT"
+  else
+    echo "  ✓ default_model already set to $OPENCLAW_MODEL_DEFAULT"
+  fi
+else
+  run openclaw init --model "$OPENCLAW_MODEL_DEFAULT"
+  run openclaw config set --key default_model --value "$OPENCLAW_MODEL_DEFAULT"
+fi
 
 # ─── 4. Install openclaw wrapper (bypasses MUL-5467 — 5s config timeout) ─
 echo
@@ -160,7 +171,7 @@ if [[ ! -e "/home/openclaw/.local/bin/openclaw.real" ]]; then
   fi
 fi
 
-cat > /home/openclaw/.local/bin/openclaw <<'WRAPPER'
+cat > /tmp/openclaw-wrapper.tmp <<'WRAPPER'
 #!/usr/bin/env bash
 # openclaw CLI wrapper — short-circuits `openclaw config file` to bypass
 # Multica daemon's 5s hardcoded timeout (MUL-5467).
@@ -172,7 +183,19 @@ if [[ "${1:-}" == "config" && "${2:-}" == "file" ]]; then
 fi
 exec "$real" "$@"
 WRAPPER
-run chmod +x /home/openclaw/.local/bin/openclaw
+
+# Idempotent: only write the wrapper if missing OR content differs.
+if [[ ! -e "/home/openclaw/.local/bin/openclaw" ]] || ! cmp -s /tmp/openclaw-wrapper.tmp "/home/openclaw/.local/bin/openclaw"; then
+  if [[ -e "/home/openclaw/.local/bin/openclaw" ]]; then
+    echo "  ⚠️  existing wrapper content differs — backing up to openclaw.bak before overwriting"
+    run cp "/home/openclaw/.local/bin/openclaw" "/home/openclaw/.local/bin/openclaw.bak"
+  fi
+  run cp /tmp/openclaw-wrapper.tmp /home/openclaw/.local/bin/openclaw
+  run chmod +x /home/openclaw/.local/bin/openclaw
+else
+  echo "  ✓ wrapper already installed (content matches, no changes)"
+fi
+rm -f /tmp/openclaw-wrapper.tmp
 
 # Ensure ~/.local/bin precedes /usr/local/bin in PATH.
 RC_LINE='export PATH="$HOME/.local/bin:$PATH"'
@@ -188,7 +211,19 @@ echo "═══ Step 5: multica-daemon systemd service ═══"
 SERVICE=/home/openclaw/.config/systemd/user/multica-daemon.service
 mkdir -p "$(dirname "$SERVICE")"
 
-cat > "$SERVICE" <<'UNIT'
+# Only write the unit file if missing or content differs (Tzo's never-overwrite rule).
+NEED_UNIT=1
+if [[ -f "$SERVICE" ]] && grep -q "ExecStart=/home/openclaw/.local/bin/multica daemon start" "$SERVICE"; then
+  NEED_UNIT=0
+  echo "  ✓ unit file already present and correct"
+fi
+
+if [[ $NEED_UNIT -eq 1 ]]; then
+  if [[ -f "$SERVICE" ]]; then
+    echo "  ⚠️  existing unit file differs — backing up to multica-daemon.service.bak"
+    run cp "$SERVICE" "$SERVICE.bak"
+  fi
+  cat > "$SERVICE" <<'UNIT'
 [Unit]
 Description=Multica agent runtime daemon
 After=network.target
@@ -203,11 +238,21 @@ Environment=PATH=/home/openclaw/.local/bin:/usr/local/bin:/usr/bin:/bin
 [Install]
 WantedBy=default.target
 UNIT
+fi
 
-run systemctl --user daemon-reload
-run systemctl --user enable --now multica-daemon
+# Reload only if the unit file changed.
+if [[ $NEED_UNIT -eq 1 ]]; then
+  run systemctl --user daemon-reload
+fi
 
-# Lingering so user services survive logout
+# Enable+start only if not already active.
+if systemctl --user is-active multica-daemon >/dev/null 2>&1; then
+  echo "  ✓ multica-daemon already running"
+else
+  run systemctl --user enable --now multica-daemon
+fi
+
+# Lingering so user services survive logout (idempotent).
 run loginctl enable-linger openclaw || true
 
 # ─── 6. Pre-flight daemon check ──────────────────────────────────────────

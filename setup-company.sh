@@ -31,9 +31,11 @@ run() {
 
 # Inter-call delay (seconds). Tight back-to-back `multica` calls can trip the
 # daemon's session-expiry path on long setups. 1s between calls keeps us safe.
+# The function MUST always return 0 — otherwise `set -e` kills the caller.
 INTER_CALL_DELAY="${INTER_CALL_DELAY:-1}"
 sleep_between() {
   [[ $DRY_RUN -eq 0 ]] && sleep "$INTER_CALL_DELAY"
+  return 0
 }
 
 # ─── Load .env ────────────────────────────────────────────────────────────
@@ -75,14 +77,53 @@ run multica auth status >/dev/null 2>&1 || { echo "❌ multica auth failed — r
 echo "═══ Step 1: create CEO + department leads ═══"
 CEO_PROMPT="$(cat prompts/ceo.md)"
 
-CEO_ID=$(run multica agent create \
-  --name "CEO" \
-  --runtime-id "${OPENCLAW_RUNTIME_ID}" \
-  --description "Orchestrator. Delegates and reviews only." \
-  --instructions "$CEO_PROMPT" \
-  --output json 2>/dev/null | jq -r '.id // empty') || CEO_ID=""
-sleep_between
-echo "  CEO: ${CEO_ID:-<exists, skipping>}"
+# Helper: get agent id by name, returns empty string if not found.
+agent_id_by_name() {
+  local name="$1"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    return 0  # skip lookup in dry-run; rely on the create-call's empty stdout
+  fi
+  multica agent list --output json 2>/dev/null | \
+    jq -r --arg n "$name" '.[] | select(.name == $n and .archived_at == null) | .id' | head -1
+}
+
+# Helper: get squad id by name.
+squad_id_by_name() {
+  local name="$1"
+  if [[ $DRY_RUN -eq 1 ]]; then return 0; fi
+  multica squad list --output json 2>/dev/null | \
+    jq -r --arg n "$name" '.[] | select(.name == $n) | .id' | head -1
+}
+
+# Helper: get skill id by name.
+skill_id_by_name() {
+  local name="$1"
+  if [[ $DRY_RUN -eq 1 ]]; then return 0; fi
+  multica skill list --output json 2>/dev/null | \
+    jq -r --arg n "$name" '.[] | select(.name == $n) | .id' | head -1
+}
+
+# Helper: get autopilot id by title.
+autopilot_id_by_title() {
+  local title="$1"
+  if [[ $DRY_RUN -eq 1 ]]; then return 0; fi
+  multica autopilot list --output json 2>/dev/null | \
+    jq -r --arg t "$title" '.autopilots // . | .[] | select(.title == $t) | .id' | head -1
+}
+
+CEO_ID=$(agent_id_by_name "CEO")
+if [[ -z "$CEO_ID" ]]; then
+  CEO_ID=$(run multica agent create \
+    --name "CEO" \
+    --runtime-id "${OPENCLAW_RUNTIME_ID}" \
+    --description "Orchestrator. Delegates and reviews only." \
+    --instructions "$CEO_PROMPT" \
+    --output json 2>/dev/null | jq -r '.id // empty') || CEO_ID=""
+  sleep_between
+  echo "  CEO: $CEO_ID (created)"
+else
+  echo "  CEO: $CEO_ID (already exists, skipping)"
+fi
 
 IFS=',' read -ra DEPT_LIST <<< "${DEPARTMENTS:-Growth,Sales,Product,Success}"
 declare -A LEAD_ID
@@ -96,40 +137,38 @@ for DEPT in "${DEPT_LIST[@]}"; do
     continue
   fi
   INSTRUCTIONS="$(cat "$PROMPT_FILE")"
-  ID=$(run multica agent create \
-    --name "${DEPT} Lead" \
-    --runtime-id "${OPENCLAW_RUNTIME_ID}" \
-    --description "${DEPT} department lead." \
-    --instructions "$INSTRUCTIONS" \
-    --output json 2>/dev/null | jq -r '.id // empty') || ID=""
-  sleep_between
-  LEAD_ID[$DEPT]="${ID:-<exists>}"
-  echo "  ${DEPT} Lead: ${LEAD_ID[$DEPT]}"
+  EXISTING=$(agent_id_by_name "${DEPT} Lead")
+  if [[ -n "$EXISTING" ]]; then
+    LEAD_ID[$DEPT]="$EXISTING"
+    echo "  ${DEPT} Lead: $EXISTING (already exists, skipping)"
+  else
+    INSTRUCTIONS="$(cat "$PROMPT_FILE")"
+    ID=$(run multica agent create \
+      --name "${DEPT} Lead" \
+      --runtime-id "${OPENCLAW_RUNTIME_ID}" \
+      --description "${DEPT} department lead." \
+      --instructions "$INSTRUCTIONS" \
+      --output json 2>/dev/null | jq -r '.id // empty') || ID=""
+    sleep_between
+    LEAD_ID[$DEPT]="$ID"
+    echo "  ${DEPT} Lead: $ID (created)"
+  fi
 done
 
 # ─── 2. Create squads ────────────────────────────────────────────────────
-# `multica squad create` requires --leader (the lead's id). When --leader is
-# missing or stale, it 422s; we don't want that silent. If the lead is in the
-# <exists> state (already in workspace from a prior run), look it up.
+# `multica squad create` requires --leader (the lead's id).
 echo
 echo "═══ Step 2: create squads (1 per dept) ═══"
 declare -A SQUAD_ID
 
-# Resolve a lead's id by name if we don't have it captured yet.
-resolve_lead_id() {
-  local name="$1"
-  local cur="${LEAD_ID[$name]:-}"
-  if [[ -n "$cur" && "$cur" != "<exists>" && "$cur" != "<exists, skipping>" ]]; then
-    echo "$cur"
-    return 0
-  fi
-  # Look up by name.
-  multica agent list --output json 2>/dev/null | \
-    jq -r --arg n "$name" '.[] | select(.name == $n) | .id' | head -1
-}
-
 for DEPT in "${DEPT_LIST[@]}"; do
-  LEADER=$(resolve_lead_id "${DEPT} Lead")
+  EXISTING=$(squad_id_by_name "${DEPT} Squad")
+  if [[ -n "$EXISTING" ]]; then
+    SQUAD_ID[$DEPT]="$EXISTING"
+    echo "  ${DEPT} Squad: $EXISTING (already exists, skipping)"
+    continue
+  fi
+  LEADER="${LEAD_ID[$DEPT]:-}"
   if [[ -z "$LEADER" ]]; then
     echo "  ⚠️  ${DEPT} Squad: no leader resolved — skipping"
     SQUAD_ID[$DEPT]="<no-leader>"
@@ -141,8 +180,8 @@ for DEPT in "${DEPT_LIST[@]}"; do
     --description "${DEPT} Squad — ${DEPT} department" \
     --output json 2>/dev/null | jq -r '.id // empty') || ID=""
   sleep_between
-  SQUAD_ID[$DEPT]="${ID:-<exists>}"
-  echo "  ${DEPT} Squad: ${SQUAD_ID[$DEPT]}"
+  SQUAD_ID[$DEPT]="$ID"
+  echo "  ${DEPT} Squad: $ID (created)"
 done
 
 # ─── 3. Bind the brand-voice skill ───────────────────────────────────────
@@ -150,37 +189,36 @@ echo
 echo "═══ Step 3: bind brand-voice skill ═══"
 SKILL_FILE="skills/bluewave-brand-voice.md"
 if [[ -f "$SKILL_FILE" ]]; then
-  SKILL_ID=$(run multica skill create \
-    --name "bluewave-brand-voice" \
-    --description "Voice rule pack for ${COMPANY_NAME:-this company} — auto-load when bound." \
-    --content-file "$SKILL_FILE" \
-    --output json 2>/dev/null | jq -r '.id // empty') || SKILL_ID=""
-  sleep_between
+  # Look first; only create if not present.
+  SKILL_ID=$(skill_id_by_name "bluewave-brand-voice")
+  if [[ -z "$SKILL_ID" ]]; then
+    SKILL_ID=$(run multica skill create \
+      --name "bluewave-brand-voice" \
+      --description "Voice rule pack for ${COMPANY_NAME:-this company} — auto-load when bound." \
+      --content-file "$SKILL_FILE" \
+      --output json 2>/dev/null | jq -r '.id // empty') || SKILL_ID=""
+    sleep_between
+    [[ -n "$SKILL_ID" ]] && echo "  Skill: $SKILL_ID (created)"
+  else
+    echo "  Skill: $SKILL_ID (already exists, skipping create)"
+  fi
 
+  # Bind to every writer (Growth Lead + Sales Lead) — not the CEO.
   if [[ -n "$SKILL_ID" ]]; then
-    echo "  Skill: $SKILL_ID"
-    # Bind to every writer (Growth Lead + Sales Lead) — not the CEO.
     for DEPT in Growth Sales; do
       LEAD="${LEAD_ID[$DEPT]:-}"
-      if [[ -n "$LEAD" && "$LEAD" != "<exists>" ]]; then
+      [[ -z "$LEAD" || "$LEAD" == "<no-leader>" ]] && continue
+      # Check if already bound.
+      ALREADY=$(multica agent skills list "$LEAD" --output json 2>/dev/null | \
+        jq -r --arg sid "$SKILL_ID" '.[] | select(.id == $sid) | .id' | head -1)
+      if [[ -n "$ALREADY" ]]; then
+        echo "  ${DEPT} Lead: skill already bound, skipping"
+      else
         run multica agent skills add "$LEAD" --skill-ids "$SKILL_ID"
         sleep_between
+        echo "  ${DEPT} Lead: skill bound"
       fi
     done
-  else
-    if [[ $DRY_RUN -eq 1 ]]; then
-      echo "  Skill: <exists, listing skipped in --dry-run mode>"
-    else
-      echo "  Skill already exists, listing…"
-      SKILL_ID=$(multica skill list --output json | jq -r '.[] | select(.name=="bluewave-brand-voice").id')
-      echo "  Found: $SKILL_ID"
-      for DEPT in Growth Sales; do
-        LEAD="${LEAD_ID[$DEPT]:-}"
-        if [[ -n "$LEAD" && "$LEAD" != "<exists>" ]]; then
-          run multica agent skills add "$LEAD" --skill-ids "$SKILL_ID"
-        fi
-      done
-    fi
   fi
 else
   echo "  ⚠️  no skills/bluewave-brand-voice.md — skipping skill setup"
@@ -189,21 +227,42 @@ fi
 # ─── 4. Register daily CEO standup autopilot ──────────────────────────────
 echo
 echo "═══ Step 4: register daily CEO standup autopilot ═══"
-AP_ID=$(run multica autopilot create \
-  --title "Daily CEO standup: scan inbox + propose 3 actions" \
-  --description "Standup task for the CEO. Read assigned in-progress issues, draft a 3-bullet status (In Progress / Blocked / Next), and post a summary. If nothing pending, post a one-liner 'no action needed'." \
-  --agent "${CEO_ID:-<ceo-id>}" \
-  --mode run_only \
-  --output json 2>/dev/null | jq -r '.id // empty') || AP_ID=""
-sleep_between
-echo "  Autopilot: ${AP_ID:-<exists>}"
+AP_TITLE="Daily CEO standup: scan inbox + propose 3 actions"
+AP_ID=$(autopilot_id_by_title "$AP_TITLE")
+if [[ -z "$AP_ID" ]]; then
+  AP_ID=$(run multica autopilot create \
+    --title "$AP_TITLE" \
+    --description "Standup task for the CEO. Read assigned in-progress issues, draft a 3-bullet status (In Progress / Blocked / Next), and post a summary. If nothing pending, post a one-liner 'no action needed'." \
+    --agent "${CEO_ID}" \
+    --mode run_only \
+    --output json 2>/dev/null | jq -r '.id // empty') || AP_ID=""
+  sleep_between
+  [[ -n "$AP_ID" ]] && echo "  Autopilot: $AP_ID (created)"
+else
+  echo "  Autopilot: $AP_ID (already exists, skipping create)"
+fi
 
-if [[ -n "$AP_ID" ]]; then
-  run multica autopilot trigger-add "$AP_ID" \
-    --kind schedule \
-    --cron "${STANDUP_CRON:-0 9 * * *}" \
-    --timezone "${STANDUP_TZ:-UTC}" \
-    --label "Daily standup"
+if [[ -n "$AP_ID" && "$AP_ID" != "<no-leader>" ]]; then
+  # Check if schedule trigger already exists.
+  if [[ $DRY_RUN -eq 1 ]]; then
+    run multica autopilot trigger-add "$AP_ID" \
+      --kind schedule \
+      --cron "${STANDUP_CRON:-0 9 * * *}" \
+      --timezone "${STANDUP_TZ:-UTC}" \
+      --label "Daily standup"
+  else
+    EXISTING_TRIG=$(multica autopilot get "$AP_ID" --output json 2>/dev/null | \
+      jq -r '.triggers // [] | .[] | select(.kind == "schedule" and .cron_expression == "'"${STANDUP_CRON:-0 9 * * *}"'" and .timezone == "'"${STANDUP_TZ:-UTC}"'") | .id' | head -1)
+    if [[ -n "$EXISTING_TRIG" ]]; then
+      echo "  Schedule trigger already registered, skipping"
+    else
+      run multica autopilot trigger-add "$AP_ID" \
+        --kind schedule \
+        --cron "${STANDUP_CRON:-0 9 * * *}" \
+        --timezone "${STANDUP_TZ:-UTC}" \
+        --label "Daily standup"
+    fi
+  fi
 fi
 
 # ─── 5. Done ──────────────────────────────────────────────────────────────
