@@ -7,15 +7,26 @@
 ## 🚀 Quickstart
 
 ```bash
+# 1. Clone the kit (private repo — needs a GitHub PAT with `repo` scope)
 git clone https://github.com/mijoro7/portable-company-kit.git
 cd portable-company-kit
-bash install.sh                 # provisions multica + openclaw + systemd unit
+
+# 2. Provision a fresh VPS with the kit's runtime tooling
+bash install.sh                 # multica + openclaw + wrapper + systemd unit
+
+# 3. Configure your company
 cp .env.example .env            # fill in MULTICA_WORKSPACE_ID, MULTICA_TOKEN
-make setup                     # creates the 5 agents, 4 squads, 1 skill, 1 autopilot
-make verify                    # confirms everything is wired
+
+# 4. Spawn the 5-agent org
+make setup                     # CEO + 4 leads + 4 squads + skill + autopilot
+
+# 5. Verify + watch a real demo issue route
+make verify                    # confirms multica/openclaw/daemon are wired
 make demo                      # creates a real issue, watches it route
 make sync                      # (optional) syncs your board to AgentPulse
 ```
+
+If you don't have a PAT yet, the repo owner (`mijoro7`) can add you as a collaborator. For an org-wide deploy, mirror the repo to your own GitHub org and substitute the URL.
 
 That's it. You now have a CEO + 4 department leads (Growth/Sales/Product/Success) plus a brand-voice skill bound to the writer leads and a daily 09:00 CEO standup autopilot.
 
