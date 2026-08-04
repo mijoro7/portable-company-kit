@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -99,9 +100,55 @@ def run_composio(args: list[str], payload: dict) -> dict:
     return json.loads(res.stdout) if res.stdout.strip() else {}
 
 
+def get_visibility() -> str:
+    """Return 'public' or 'private' for the repo."""
+    res = run_composio(
+        ["GITHUB_GET_A_REPOSITORY"],
+        {"owner": OWNER, "repo": REPO},
+    )
+    data = res.get("data") or {}
+    if data.get("visibility") == "public" or data.get("private") is False:
+        return "public"
+    return "private"
+
+
+def set_visibility(visibility: str) -> None:
+    """Set the repo's visibility. visibility = 'public' or 'private'."""
+    res = run_composio(
+        ["GITHUB_UPDATE_A_REPOSITORY"],
+        {"owner": OWNER, "repo": REPO, "private": visibility != "public"},
+    )
+    if res.get("successful"):
+        print(f"✓ repo visibility → {visibility}")
+    else:
+        print(f"⚠️  visibility change returned: {res.get('data')}")
+
+
 def main():
-    dry_run = "--dry-run" in sys.argv
+    args = sys.argv[1:]
+    dry_run = "--dry-run" in args
+    force_public = "--set-public" in args
+    force_private = "--set-private" in args
+
+    # ─── Resolve target visibility ────────────────────────────────────
     payload = compose()
+    target_visibility = None  # None = don't change
+    if force_public:
+        target_visibility = "public"
+    elif force_private:
+        target_visibility = "private"
+    else:
+        # Default rule (Tzo 2026-08-04):
+        #   first-ever push for a brand-new repo → public (so we can clone + test)
+        #   subsequent pushes              → leave visibility alone
+        # Detect "first ever push": a tag we manage doesn't yet exist.
+        tag_res = run_composio(
+            ["GITHUB_GET_A_REFERENCE"],
+            {"owner": OWNER, "repo": REPO, "ref": "refs/tags/v0.1"},
+        )
+        if not tag_res.get("successful"):
+            target_visibility = "public"
+            print("── first-time push detected → starting public for testing ──")
 
     if dry_run:
         print("── DRY RUN: would call GITHUB_COMMIT_MULTIPLE_FILES ──")
@@ -109,6 +156,8 @@ def main():
         print(f"    upserts ({len(payload['upserts'])}):")
         for u in payload["upserts"]:
             print(f"      - {u['path']} ({len(u['content'])} bytes)")
+        if target_visibility:
+            print(f"    would set visibility → {target_visibility}")
         return
 
     print(f"── Pushing {len(payload['upserts'])} files to {OWNER}/{REPO}@{BRANCH} ──")
@@ -122,10 +171,24 @@ def main():
     print(f"✓ commit {commit_sha} created")
     print(f"  URL: https://github.com/{OWNER}/{REPO}/commit/{commit_sha}")
 
+    # ── Visibility (Tzo's 2026-08-04 rule) ────────────────────────────────────
+    # First-ever push → public so the kit is clone-and-run-testable.
+    # After you've validated (clone + make verify + make demo pass), run
+    #   python3 dist/push-v0.1.py --set-private
+    # to seal it. Subsequent file-only pushes leave visibility alone.
+    if target_visibility:
+        current = get_visibility()
+        if current != target_visibility:
+            set_visibility(target_visibility)
+        else:
+            print(f"── repo already {target_visibility} (no change) ──")
+    else:
+        current = get_visibility()
+        print(f"── repo visibility unchanged ({current}); use --set-public / --set-private to flip ──")
+
     # ── Create v0.1 tag ─────────────────────────────────────────────────────
     if not commit_sha:
         # Fallback: parse the data blob for any sha-shaped string
-        import re
         m = re.search(r"\b[0-9a-f]{40}\b", json.dumps(result))
         if m:
             commit_sha = m.group(0)
