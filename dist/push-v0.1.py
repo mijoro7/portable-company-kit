@@ -11,8 +11,14 @@ call that:
 
 Then creates a `v0.1` annotated tag pointing at the new commit.
 
+Visibility rule (Tzo 2026-08-04):
+  • First-ever push of a new repo  → PUBLIC (so anyone can clone + test)
+  • After you validate the kit    → run `python3 dist/push-v0.1.py --set-private`
+  • Subsequent file-only pushes   → leave visibility alone
+  • Explicit override: --set-public | --set-private
+
 Usage:
-  python3 dist/push-v0.1.py [--dry-run]
+  python3 dist/push-v0.1.py [--dry-run] [--set-public] [--set-private]
 
 Re-runs are idempotent: the commit upserts the same paths each time, GitHub
 deduplicates by content.

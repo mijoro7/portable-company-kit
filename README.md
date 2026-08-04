@@ -7,7 +7,7 @@
 ## 🚀 Quickstart
 
 ```bash
-# 1. Clone the kit (private repo — needs a GitHub PAT with `repo` scope)
+# 1. Clone the kit (public repo — no auth required for v0.1 testing)
 git clone https://github.com/mijoro7/portable-company-kit.git
 cd portable-company-kit
 
@@ -26,7 +26,7 @@ make demo                      # creates a real issue, watches it route
 make sync                      # (optional) syncs your board to AgentPulse
 ```
 
-If you don't have a PAT yet, the repo owner (`mijoro7`) can add you as a collaborator. For an org-wide deploy, mirror the repo to your own GitHub org and substitute the URL.
+> **Repo lifecycle (Tzo's rule, 2026-08-04):** the kit is published **public** during the first push so anyone can clone + test. After the kit's own validation passes (clone → make verify → make demo all green), run `python3 dist/push-v0.1.py --set-private` to seal. The push script auto-detects first-ever vs subsequent pushes.
 
 That's it. You now have a CEO + 4 department leads (Growth/Sales/Product/Success) plus a brand-voice skill bound to the writer leads and a daily 09:00 CEO standup autopilot.
 

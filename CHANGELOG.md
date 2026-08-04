@@ -12,9 +12,9 @@ All notable changes to this kit. Format: [Keep a Changelog](https://keepachangel
 ## [0.1.0] — 2026-08-04
 
 ### Added
-- `install.sh` — VPS provisioning (multica + openclaw + wrapper + systemd unit). Idempotent + `--dry-run` mode.
+- `install.sh` — VPS provisioning (multica + openclaw + wrapper + systemd unit). Idempotent + `--dry-run` mode. Robust to symlinked openclaw binaries.
 - `setup-company.sh` — the 60-second setup recipe, as a runnable script. Honours `.env`. Idempotent + `--dry-run`.
-- `Makefile` — kit-level commands: `install`, `setup`, `setup-dry`, `verify`, `demo`, `sync`, `sync-dry`, `lint`, `clean`, `version`, `help`.
+- `Makefile` — kit-level commands: `install`, `setup`, `setup-dry`, `install-dry`, `verify`, `demo`, `sync`, `sync-dry`, `lint`, `clean`, `version`, `help`.
 - `.env.example` — variables for workspace id, runtime id, model, standup cron+timezone, brand, departments, AgentPulse project + token, notification chat id. **Cron expression must stay quoted.**
 - `CHANGELOG.md` — this file.
 - `MOTHER_COMPANY.md` — master guide (12 sections, 258 lines, 12 gotchas).
@@ -24,6 +24,7 @@ All notable changes to this kit. Format: [Keep a Changelog](https://keepachangel
 - `prompts/` — canonical per-role prompts (CEO + Growth/Sales/Product/Success leads).
 - `skills/bluewave-brand-voice.md` — example workspace skill recipe.
 - `dist/sync-multica-to-agentpulse.py` — one-way Multica → AgentPulse sync (idempotent, title-dedup).
+- `dist/push-v0.1.py` — Composio-backed GitHub publisher (no git push required). Enforces the **public-first / private-after-test** repo visibility rule.
 - `test-results/corner-{1..6}.md` — receipts per test corner (delegation / comments / squad-routing / skills / autopilots / AgentPulse sync).
 
 ### Verified end-to-end on the `my_admin` test company
