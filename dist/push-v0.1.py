@@ -140,7 +140,16 @@ def main():
         }
         tag_path = REPO_ROOT / "dist" / ".tag-payload.json"
         tag_path.write_text(json.dumps(tag_payload))
-        print("── Creating v0.1 tag ──")
+        print("── Updating v0.1 tag ──")
+        # Composio's update_a_reference has a known bug (encodes tag as branch);
+        # do delete + recreate instead of relying on update.
+        # First: delete the existing tag (idempotent — 404 is fine).
+        subprocess.run(
+            [COMPOSIO, "execute", "GITHUB_DELETE_A_REFERENCE",
+             "-d", json.dumps({"owner": OWNER, "repo": REPO, "ref": "refs/tags/v0.1"})],
+            env=OS_ENV, capture_output=True, text=True, timeout=60,
+        )
+        # Then: create the tag pointing at the new commit.
         tag_res = subprocess.run(
             [COMPOSIO, "execute", "GITHUB_CREATE_A_REFERENCE", "-d", f"@{tag_path}"],
             env=OS_ENV, capture_output=True, text=True, timeout=60,
