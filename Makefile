@@ -11,9 +11,13 @@ SHELL := /usr/bin/env bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 # Pick up .env if it exists (for make setup / make demo / make sync).
+# `include` doesn't work — Make parses `.env` and chokes on shell-style `=` lines.
+# `set -a` from a shell source would work, but Make can't source. So extract keys
+# with sed and hand them to Make as `export KEY := …` lines. (-d'\n' on xargs
+# keeps them separate.)
 ifneq (,$(wildcard ./.env))
-include .env
-export
+ENV_KEYS := $(shell sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env | xargs -d '\n')
+$(foreach k,$(ENV_KEYS),$(eval export $(k) := $$(shell sed -n 's/^$(k)=//p' .env)))
 endif
 
 .PHONY: help install setup verify demo sync clean lint version
@@ -46,7 +50,7 @@ verify:  ## confirm multica + openclaw + daemon are wired
 	@echo "==> .env"
 	@if [[ -f .env ]]; then echo "  ✓ present"; else echo "  ✗ missing — cp .env.example .env"; fi
 	@echo "==> workspace"
-	@if [[ -n "${MULTICA_WORKSPACE_ID:-}" ]]; then echo "  ✓ $MULTICA_WORKSPACE_ID"; else echo "  ✗ MULTICA_WORKSPACE_ID not set"; fi
+	@if [[ -n "$${MULTICA_WORKSPACE_ID:-}" ]]; then echo "  ✓ $$MULTICA_WORKSPACE_ID"; else echo "  ✗ MULTICA_WORKSPACE_ID not set"; fi
 
 demo:  ## create a test issue, watch it route, post a comment, sync to AgentPulse
 	@bash -c 'set -e; \
