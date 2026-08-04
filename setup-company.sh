@@ -29,6 +29,13 @@ run() {
   fi
 }
 
+# Inter-call delay (seconds). Tight back-to-back `multica` calls can trip the
+# daemon's session-expiry path on long setups. 1s between calls keeps us safe.
+INTER_CALL_DELAY="${INTER_CALL_DELAY:-1}"
+sleep_between() {
+  [[ $DRY_RUN -eq 0 ]] && sleep "$INTER_CALL_DELAY"
+}
+
 # ─── Load .env ────────────────────────────────────────────────────────────
 if [[ ! -f .env ]]; then
   echo "❌ .env not found. Run: cp .env.example .env  then fill it in." >&2
@@ -60,7 +67,9 @@ for cmd in multica jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "❌ missing: $cmd — run install.sh first" >&2; exit 1; }
 done
 [[ -n "${MULTICA_WORKSPACE_ID:-}" ]] || { echo "❌ MULTICA_WORKSPACE_ID not set" >&2; exit 1; }
-[[ -n "${MULTICA_TOKEN:-}" ]] || { echo "❌ MULTICA_TOKEN not set (run 'multica login')" >&2; exit 1; }
+# Auth check: `multica auth status` returns 0 only when a valid session is loaded.
+# Cookie auth is handled by `multica login`, NOT by an env var.
+run multica auth status >/dev/null 2>&1 || { echo "❌ multica auth failed — run 'multica login' first" >&2; exit 1; }
 
 # ─── 1. Create CEO + 4 (or N) leads ──────────────────────────────────────
 echo "═══ Step 1: create CEO + department leads ═══"
@@ -68,10 +77,11 @@ CEO_PROMPT="$(cat prompts/ceo.md)"
 
 CEO_ID=$(run multica agent create \
   --name "CEO" \
-  --runtime "${OPENCLAW_RUNTIME_ID}" \
+  --runtime-id "${OPENCLAW_RUNTIME_ID}" \
   --description "Orchestrator. Delegates and reviews only." \
   --instructions "$CEO_PROMPT" \
   --output json 2>/dev/null | jq -r '.id // empty') || CEO_ID=""
+sleep_between
 echo "  CEO: ${CEO_ID:-<exists, skipping>}"
 
 IFS=',' read -ra DEPT_LIST <<< "${DEPARTMENTS:-Growth,Sales,Product,Success}"
@@ -88,23 +98,49 @@ for DEPT in "${DEPT_LIST[@]}"; do
   INSTRUCTIONS="$(cat "$PROMPT_FILE")"
   ID=$(run multica agent create \
     --name "${DEPT} Lead" \
-    --runtime "${OPENCLAW_RUNTIME_ID}" \
+    --runtime-id "${OPENCLAW_RUNTIME_ID}" \
     --description "${DEPT} department lead." \
     --instructions "$INSTRUCTIONS" \
     --output json 2>/dev/null | jq -r '.id // empty') || ID=""
+  sleep_between
   LEAD_ID[$DEPT]="${ID:-<exists>}"
   echo "  ${DEPT} Lead: ${LEAD_ID[$DEPT]}"
 done
 
 # ─── 2. Create squads ────────────────────────────────────────────────────
+# `multica squad create` requires --leader (the lead's id). When --leader is
+# missing or stale, it 422s; we don't want that silent. If the lead is in the
+# <exists> state (already in workspace from a prior run), look it up.
 echo
 echo "═══ Step 2: create squads (1 per dept) ═══"
 declare -A SQUAD_ID
 
+# Resolve a lead's id by name if we don't have it captured yet.
+resolve_lead_id() {
+  local name="$1"
+  local cur="${LEAD_ID[$name]:-}"
+  if [[ -n "$cur" && "$cur" != "<exists>" && "$cur" != "<exists, skipping>" ]]; then
+    echo "$cur"
+    return 0
+  fi
+  # Look up by name.
+  multica agent list --output json 2>/dev/null | \
+    jq -r --arg n "$name" '.[] | select(.name == $n) | .id' | head -1
+}
+
 for DEPT in "${DEPT_LIST[@]}"; do
+  LEADER=$(resolve_lead_id "${DEPT} Lead")
+  if [[ -z "$LEADER" ]]; then
+    echo "  ⚠️  ${DEPT} Squad: no leader resolved — skipping"
+    SQUAD_ID[$DEPT]="<no-leader>"
+    continue
+  fi
   ID=$(run multica squad create \
     --name "${DEPT} Squad" \
+    --leader "$LEADER" \
+    --description "${DEPT} Squad — ${DEPT} department" \
     --output json 2>/dev/null | jq -r '.id // empty') || ID=""
+  sleep_between
   SQUAD_ID[$DEPT]="${ID:-<exists>}"
   echo "  ${DEPT} Squad: ${SQUAD_ID[$DEPT]}"
 done
@@ -119,6 +155,7 @@ if [[ -f "$SKILL_FILE" ]]; then
     --description "Voice rule pack for ${COMPANY_NAME:-this company} — auto-load when bound." \
     --content-file "$SKILL_FILE" \
     --output json 2>/dev/null | jq -r '.id // empty') || SKILL_ID=""
+  sleep_between
 
   if [[ -n "$SKILL_ID" ]]; then
     echo "  Skill: $SKILL_ID"
@@ -127,6 +164,7 @@ if [[ -f "$SKILL_FILE" ]]; then
       LEAD="${LEAD_ID[$DEPT]:-}"
       if [[ -n "$LEAD" && "$LEAD" != "<exists>" ]]; then
         run multica agent skills add "$LEAD" --skill-ids "$SKILL_ID"
+        sleep_between
       fi
     done
   else
@@ -157,6 +195,7 @@ AP_ID=$(run multica autopilot create \
   --agent "${CEO_ID:-<ceo-id>}" \
   --mode run_only \
   --output json 2>/dev/null | jq -r '.id // empty') || AP_ID=""
+sleep_between
 echo "  Autopilot: ${AP_ID:-<exists>}"
 
 if [[ -n "$AP_ID" ]]; then
