@@ -1,18 +1,41 @@
 # Portable Company Kit
 
-> A reusable recipe for spawning an autonomous AI-run business on [Multica](https://multica.ai) — a known-good org chart, prompt patterns, real CLI commands, and the gotchas we've paid for. Clone, change a few variables, run a 5-agent company end-to-end inside an hour.
+> A reusable recipe for spawning an autonomous AI-run business on [Multica](https://multica.ai) — a known-good org chart, prompt patterns, real CLI commands, and the gotchas we've paid for. **Clone → install → setup → run.** A 5-agent company, end-to-end, in under 5 minutes.
 
 **Status:** v0.1 (2026-08-04). Six corners verified end-to-end on the test company `my_admin`.
 
+## 🚀 Quickstart
+
+```bash
+git clone https://github.com/mijoro7/portable-company-kit.git
+cd portable-company-kit
+bash install.sh                 # provisions multica + openclaw + systemd unit
+cp .env.example .env            # fill in MULTICA_WORKSPACE_ID, MULTICA_TOKEN
+make setup                     # creates the 5 agents, 4 squads, 1 skill, 1 autopilot
+make verify                    # confirms everything is wired
+make demo                      # creates a real issue, watches it route
+make sync                      # (optional) syncs your board to AgentPulse
+```
+
+That's it. You now have a CEO + 4 department leads (Growth/Sales/Product/Success) plus a brand-voice skill bound to the writer leads and a daily 09:00 CEO standup autopilot.
+
+**Total operations:** ~12. **Total time:** ~5 min on a fresh Ubuntu VPS with sudo.
+
 ## What you get
 
-- **5-agent org** in one workspace: 1 CEO + 4 department leads (Growth, Sales, Product, Success).
+- **5-agent org** in one workspace: 1 CEO + 4 department leads.
 - **4 squads** (one per department) so a future hire slots in without renaming people.
 - **Stable skill binding** per agent via `multica agent skills add`.
 - **Autopilots** for daily/weekly rituals (standups, follow-ups, dashboards).
-- **One-way board sync** to AgentPulse for cross-tool visibility.
+- **One-way board sync** to AgentPulse via `dist/sync-multica-to-agentpulse.py`. Re-runnable; de-dupes by title; moves existing tasks if their Multica status changes.
 - **Reviewer loop**: leads mark `in_review`, CEO marks `done`.
 - **Audit trail on every issue** via threaded comments.
+
+## Read next
+
+- **[MOTHER_COMPANY.md](./MOTHER_COMPANY.md)** — the master guide. 12 sections covering: org chart, variables, canonical prompts, skill binding pattern, issue workflow, autopilot modes, **12 known gotchas (G1–G12)**, what's not covered, open issues, verified test matrix, naming.
+- **[CHANGELOG.md](./CHANGELOG.md)** — versioned state of the kit.
+- **[test-results/](./test-results/)** — receipts per corner (what was tested, what passed).
 
 ## Start here
 
