@@ -64,6 +64,88 @@ else
   run curl -fsSL https://multica.ai/install.sh | bash
 fi
 
+# ─── 2.5. Check multica authentication ───────────────────────────────────
+echo
+echo "═══ Step 2.5: multica authentication ═══"
+if run multica auth status &>/dev/null; then
+  echo "✓ multica authenticated"
+else
+  echo "⚠️  multica not authenticated"
+  echo
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "ACTION REQUIRED: Please login to multica"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo
+  echo "1. Open a NEW terminal window"
+  echo "2. Run: multica login"
+  echo "3. Complete the browser authentication"
+  echo
+  read -p "Press ENTER when you've completed the login..."
+  
+  # Verify authentication
+  if run multica auth status &>/dev/null; then
+    echo "✓ multica authenticated successfully"
+  else
+    echo "❌ Authentication failed. Please try again."
+    exit 1
+  fi
+fi
+
+# ─── 2.6. Prepare workspace ─────────────────────────────────────────────
+echo
+echo "═══ Step 2.6: workspace configuration ═══"
+
+# Check if workspace already exists in .env
+if [ -f .env ] && grep -q "^MULTICA_WORKSPACE_ID=" .env; then
+  WORKSPACE_ID=$(grep "^MULTICA_WORKSPACE_ID=" .env | cut -d'=' -f2)
+  if [ -n "$WORKSPACE_ID" ]; then
+    echo "✓ Using existing workspace: $WORKSPACE_ID"
+  fi
+fi
+
+# If no workspace configured yet
+if [ -z "$WORKSPACE_ID" ]; then
+  echo "No workspace configured yet."
+  echo
+  echo "Options:"
+  echo "  1. Create a new workspace automatically"
+  echo "  2. Use an existing workspace UUID"
+  echo
+  read -p "Choose [1/2]: " -n 1 -r
+  echo
+  
+  case $REPLY in
+    1)
+      echo "Creating new workspace..."
+      WORKSPACE_ID=$(run multica workspace create --output json | jq -r '.id')
+      if [ -n "$WORKSPACE_ID" ]; then
+        echo "✓ Workspace created: $WORKSPACE_ID"
+      else
+        echo "❌ Failed to create workspace"
+        exit 1
+      fi
+      ;;
+    2)
+      read -p "Enter workspace UUID: " WORKSPACE_ID
+      if [ -z "$WORKSPACE_ID" ]; then
+        echo "❌ No UUID provided"
+        exit 1
+      fi
+      echo "✓ Using workspace: $WORKSPACE_ID"
+      ;;
+    *)
+      echo "❌ Invalid choice"
+      exit 1
+      ;;
+  esac
+  
+  # Update .env with workspace ID
+  if [ ! -f .env ]; then
+    run cp .env.example .env
+  fi
+  run sed -i "s/^MULTICA_WORKSPACE_ID=.*/MULTICA_WORKSPACE_ID=$WORKSPACE_ID/" .env
+fi
+
 # ─── 3. Install runtime (optional) ────────────────────────────────────────
 echo
 echo "═══ Step 3: runtime installation ═══"
@@ -190,19 +272,41 @@ UNIT
   echo "✓ multica-daemon service installed and started"
 fi
 
-# ─── 5. Done ──────────────────────────────────────────────────────────────
+# ─── 5. Auto-run setup-company.sh ─────────────────────────────────────────
 echo
-echo "═══ Installation complete ═══"
-echo
-echo "Next steps:"
-echo "  1. cd portable-company-kit"
-echo "  2. cp .env.example .env"
-echo "  3. Edit .env with your settings:"
-echo "     - MULTICA_WORKSPACE_ID (required)"
-echo "     - RUNTIME (optional: auto/openclaw/claude/ollama/skip)"
-echo "  4. bash setup-company.sh"
-echo
-if [[ "$RUNTIME" == "skip" ]]; then
-  echo "Remember to register a runtime before running setup-company.sh:"
-  echo "  multica runtime register <type>"
+echo "═══ Step 5: create agents and squads ═══"
+echo "Running setup-company.sh..."
+if run bash setup-company.sh; then
+  echo "✓ All agents and squads created successfully"
+else
+  echo "❌ setup-company.sh failed"
+  exit 1
 fi
+
+# ─── 6. Run demo to verify ───────────────────────────────────────────────
+echo
+echo "═══ Step 6: run demo to verify ═══"
+echo "Creating a test issue to verify the delegation loop..."
+if run make demo; then
+  echo "✓ Demo completed successfully"
+else
+  echo "⚠️  Demo failed - you may need to troubleshoot"
+fi
+
+# ─── 7. Done ──────────────────────────────────────────────────────────────
+echo
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "✓ Installation complete!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+echo "Your 6-agent company is ready to use:"
+echo "  • CEO (orchestrator)"
+echo "  • Chief-of-Staff (recruits specialists from upstream pool)"
+echo "  • Growth Lead (marketing specialist)"
+echo "  • Sales Lead (outbound specialist)"
+echo "  • Product Lead (product manager)"
+echo "  • Success Lead (customer success manager)"
+echo
+echo "Create issues with: multica issue create"
+echo "View issues with: multica issue list"
+echo
