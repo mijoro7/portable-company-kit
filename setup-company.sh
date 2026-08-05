@@ -3,11 +3,12 @@
 #
 # Usage:
 #   1. cp .env.example .env
-#   2. edit .env with your MULTICA_WORKSPACE_ID and friends
+#   2. edit .env with your MULTICA_WORKSPACE_ID and runtime preference
 #   3. bash setup-company.sh            # create agents + squads + skills + autopilot
 #   4. bash setup-company.sh --dry-run  # preview without writes
 #
 # Idempotent: re-running is safe. Agents/squads already existing are skipped.
+# Runtime-agnostic: works with OpenClaw, Claude Code, Ollama, or auto-detect.
 
 set -euo pipefail
 
@@ -59,7 +60,7 @@ set +a
 
 echo "═══ Portable Company Kit — setup-company.sh ═══"
 echo "Workspace : ${MULTICA_WORKSPACE_ID:-<unset>}"
-echo "Runtime    : ${OPENCLAW_RUNTIME_ID:-default}"
+echo "Runtime    : ${RUNTIME:-auto-detect}"
 echo "Departments: ${DEPARTMENTS:-Growth,Sales,Product,Success}"
 echo "Standup    : ${STANDUP_CRON:-'0 9 * * *'} ${STANDUP_TZ:-UTC}"
 echo
@@ -73,8 +74,52 @@ done
 # Cookie auth is handled by `multica login`, NOT by an env var.
 run multica auth status >/dev/null 2>&1 || { echo "❌ multica auth failed — run 'multica login' first" >&2; exit 1; }
 
-# ─── 1. Create CEO + 4 (or N) leads ──────────────────────────────────────
-echo "═══ Step 1: create CEO + department leads ═══"
+# ─── Runtime detection ───────────────────────────────────────────────────
+echo "═══ Step 0: runtime detection ═══"
+RUNTIME_ID=""
+RUNTIME_NAME=""
+
+if [[ -n "${RUNTIME:-}" && "$RUNTIME" != "auto" ]]; then
+  # User specified a runtime in .env
+  case "$RUNTIME" in
+    openclaw|OpenClaw)
+      RUNTIME_NAME="OpenClaw"
+      ;;
+    claude|Claude)
+      RUNTIME_NAME="Claude"
+      ;;
+    ollama|Ollama)
+      RUNTIME_NAME="Ollama"
+      ;;
+    codex|Codex)
+      RUNTIME_NAME="Codex"
+      ;;
+    *)
+      # Treat as UUID or exact name
+      RUNTIME_ID="$RUNTIME"
+      RUNTIME_NAME="custom"
+      ;;
+  esac
+  
+  if [[ -z "$RUNTIME_ID" ]]; then
+    # Look up by name
+    RUNTIME_ID=$(run multica runtime list --output json 2>/dev/null | \
+      jq -r --arg name "$RUNTIME_NAME" '.[] | select(.name | test($name; "i")) | .id' | head -1)
+  fi
+  
+  [[ -n "$RUNTIME_ID" ]] || { echo "❌ Runtime '$RUNTIME' not found. Run: multica runtime list" >&2; exit 1; }
+  echo "  ✓ Using $RUNTIME_NAME runtime: $RUNTIME_ID"
+else
+  # Auto-detect: pick first available runtime
+  RUNTIME_ID=$(run multica runtime list --output json 2>/dev/null | jq -r '.[0].id')
+  RUNTIME_NAME=$(run multica runtime list --output json 2>/dev/null | jq -r '.[0].name')
+  [[ -n "$RUNTIME_ID" ]] || { echo "❌ No runtimes found. Register one first." >&2; exit 1; }
+  echo "  ✓ Auto-detected runtime: $RUNTIME_NAME ($RUNTIME_ID)"
+fi
+
+# ─── 1. Create CEO + Chief-of-Staff + 4 (or N) leads ─────────────────────
+echo
+echo "═══ Step 1: create CEO + Chief-of-Staff + department leads ═══"
 CEO_PROMPT="$(cat prompts/ceo.md)"
 
 # Helper: get agent id by name, returns empty string if not found.
@@ -111,13 +156,14 @@ autopilot_id_by_title() {
     jq -r --arg t "$title" '.autopilots // . | .[] | select(.title == $t) | .id' | head -1
 }
 
+# CEO
 CEO_ID=$(agent_id_by_name "CEO")
 if [[ -z "$CEO_ID" ]]; then
   CEO_ID=$(run multica agent create \
     --name "CEO" \
-    --runtime-id "${OPENCLAW_RUNTIME_ID}" \
+    --runtime-id "${RUNTIME_ID}" \
     --description "Orchestrator. Delegates and reviews only." \
-    --instructions "$CEO_PROMPT" \
+    --instructions-file prompts/ceo.md \
     --output json 2>/dev/null | jq -r '.id // empty') || CEO_ID=""
   sleep_between
   echo "  CEO: $CEO_ID (created)"
@@ -125,6 +171,22 @@ else
   echo "  CEO: $CEO_ID (already exists, skipping)"
 fi
 
+# Chief-of-Staff
+COS_ID=$(agent_id_by_name "Chief-of-Staff")
+if [[ -z "$COS_ID" ]]; then
+  COS_ID=$(run multica agent create \
+    --name "Chief-of-Staff" \
+    --runtime-id "${RUNTIME_ID}" \
+    --description "Agent recruiter. Spawns, binds skills, audits, archives." \
+    --instructions-file prompts/chief-of-staff.md \
+    --output json 2>/dev/null | jq -r '.id // empty') || COS_ID=""
+  sleep_between
+  echo "  Chief-of-Staff: $COS_ID (created)"
+else
+  echo "  Chief-of-Staff: $COS_ID (already exists, skipping)"
+fi
+
+# Department leads
 IFS=',' read -ra DEPT_LIST <<< "${DEPARTMENTS:-Growth,Sales,Product,Success}"
 declare -A LEAD_ID
 
@@ -136,18 +198,16 @@ for DEPT in "${DEPT_LIST[@]}"; do
     echo "  ⚠️  no prompt file at $PROMPT_FILE — skipping ${DEPT} Lead"
     continue
   fi
-  INSTRUCTIONS="$(cat "$PROMPT_FILE")"
   EXISTING=$(agent_id_by_name "${DEPT} Lead")
   if [[ -n "$EXISTING" ]]; then
     LEAD_ID[$DEPT]="$EXISTING"
     echo "  ${DEPT} Lead: $EXISTING (already exists, skipping)"
   else
-    INSTRUCTIONS="$(cat "$PROMPT_FILE")"
     ID=$(run multica agent create \
       --name "${DEPT} Lead" \
-      --runtime-id "${OPENCLAW_RUNTIME_ID}" \
+      --runtime-id "${RUNTIME_ID}" \
       --description "${DEPT} department lead." \
-      --instructions "$INSTRUCTIONS" \
+      --instructions-file "$PROMPT_FILE" \
       --output json 2>/dev/null | jq -r '.id // empty') || ID=""
     sleep_between
     LEAD_ID[$DEPT]="$ID"

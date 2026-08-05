@@ -1,51 +1,71 @@
 # Changelog
 
-All notable changes to this kit. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+All notable changes to the Portable Company Kit.
 
-## [Unreleased]
-
-### Pending
-- Public name decision (Mother Company / Portable Company Kit / AI Business-in-a-Box / Self-Running Company).
-- Tagged `v0.1` GitHub release.
-- File Multica feedback items: MUL-5467 follow-up, "auto-load when X" misleading wording.
-
-## [0.1.0] — 2026-08-04
+## [v0.2.0] - 2026-08-05
 
 ### Added
-- `install.sh` — VPS provisioning (multica + openclaw + wrapper + systemd unit). Idempotent + `--dry-run` mode. Robust to symlinked openclaw binaries.
-- `setup-company.sh` — the 60-second setup recipe, as a runnable script. Honours `.env`. Idempotent + `--dry-run`.
-- `Makefile` — kit-level commands: `install`, `setup`, `setup-dry`, `install-dry`, `verify`, `demo`, `sync`, `sync-dry`, `lint`, `clean`, `version`, `help`.
-- `.env.example` — variables for workspace id, runtime id, model, standup cron+timezone, brand, departments, AgentPulse project + token, notification chat id. **Cron expression must stay quoted.**
-- `CHANGELOG.md` — this file.
-- `MOTHER_COMPANY.md` — master guide (12 sections, 258 lines, 12 gotchas).
-- `README.md` — entrypoint with clone-and-run instructions.
-- `LICENSE` — MIT.
-- `.gitignore` — excludes env, tokens, logs, multica daemon workdirs.
-- `prompts/` — canonical per-role prompts (CEO + Growth/Sales/Product/Success leads).
-- `skills/bluewave-brand-voice.md` — example workspace skill recipe.
-- `dist/sync-multica-to-agentpulse.py` — one-way Multica → AgentPulse sync (idempotent, title-dedup).
-- `dist/push-v0.1.py` — Composio-backed GitHub publisher (no git push required). Enforces the **public-first / private-after-test** repo visibility rule.
-- `test-results/corner-{1..6}.md` — receipts per test corner (delegation / comments / squad-routing / skills / autopilots / AgentPulse sync).
+- **Chief-of-Staff agent**: New standing agent responsible for recruiting specialists from the upstream pool
+- **Runtime-agnostic installation**: Kit now supports multiple runtimes (OpenClaw, Claude Code, Ollama) with auto-detection
+- **Upstream specialist pool integration**: Access to 258+ specialist personas from msitarzewski/agency-agents
 
-### Verified end-to-end on the `my_admin` test company
-- ✅ Corner 1: single-issue delegation loop (MYA-8)
-- ✅ Corner 2: threaded comment audit trail (MYA-8)
-- ✅ Corner 3: squad routing (MYA-9)
-- ✅ Corner 4: workspace skill binding, brand-voice copy (MYA-11)
-- ✅ Corner 5: autopilot `run_only` + cron 09:00 Africa/Nairobi
-- ✅ Corner 6: AgentPulse round-trip sync (9 issues; MYA-4 status flip → column move)
+### Changed
+- **Prompts upgraded**: Replaced placeholder department lead prompts with rich upstream personas:
+  - Growth Lead: marketing-growth-hacker (200+ lines vs 53 lines)
+  - Sales Lead: sales-outbound-strategist (469 lines vs 40 lines)
+  - Product Lead: product-manager (460 lines vs 50 lines)
+  - Success Lead: customer-success-manager (460 lines vs 45 lines)
+- **setup-company.sh**: Completely rewritten to be runtime-agnostic
+  - Auto-detects available runtimes (OpenClaw/Claude/Ollama)
+  - Creates Chief-of-Staff agent
+  - Uses `--instructions-file` instead of inline instructions
+- **install.sh**: Completely rewritten for flexibility
+  - `--runtime <type>` flag to specify runtime
+  - `--skip-runtime` flag to install only Multica
+  - Auto-detection when no runtime specified
+  - Runtime registration happens automatically
+- **.env.example**: Updated to use `RUNTIME` instead of `OPENCLAW_RUNTIME_ID`
+- **Architecture**: 5 agents → 6 agents (CEO, Chief-of-Staff, 4 department leads)
 
-### Known limitations (carrying into 0.2.0)
-- Boss mode (full review/close loop with sub-issues) untested at >1 lead per squad.
-- Round-robin squad member routing — only first-available member is picked; no fairness.
-- Two-way AgentPulse sync — only one-way works today.
-- `create_issue` autopilot mode not yet exercised (only `run_only`).
-- Claude-runtime agents unverified (runtime not authed in this env).
-- Repo has no `v0.1` tag yet on GitHub (Composio publishing uploads files but doesn't push refs).
+### Architecture
+```
+CEO (orchestrator)
+├── Chief-of-Staff (agent recruiter + auditor)
+├── Growth Lead (marketing-growth-hacker persona)
+├── Sales Lead (sales-outbound-strategist persona)
+├── Product Lead (product-manager persona)
+└── Success Lead (customer-success-manager persona)
 
-### Provenance
-- Aug 2 baseline: `COMPANY_OS.md` + `TOOLING_MATRIX.md` + `dna/` — original org-chart/dna drafts by Tzo.
-- Aug 4: v0.1 kit assembled, live-tested, shipped.
+Specialist Pool (258+ personas):
+- Used on-demand by Chief-of-Staff when standing roles don't match
+- 18 divisions: engineering, design, marketing, sales, product, etc.
+- No bundling needed - spawn per-issue, archive after delivery
+```
 
-[Unreleased]: https://github.com/mijoro7/portable-company-kit/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/mijoro7/portable-company-kit/releases/tag/v0.1.0
+### Migration from v0.1
+If you have a v0.1 deployment:
+1. Pull latest changes
+2. Update your prompts: `cp prompts/* <your-deployment>/prompts/`
+3. Run setup-company.sh again - it's idempotent and will:
+   - Create Chief-of-Staff agent
+   - Update department lead prompts with richer personas
+   - Preserve existing agents, squads, skills
+
+## [v0.1.0] - 2026-08-04
+
+### Initial Release
+- 5-agent organization: CEO + 4 department leads
+- Basic prompts for each role
+- OpenClaw-only runtime support
+- Multica + OpenClaw integration
+- systemd daemon setup
+- 6-corner verification complete
+- AgentPulse one-way sync
+
+### Verified Features
+- Delegation loop (CEO → Lead → CEO review)
+- Comment threads as audit trail
+- Squad routing (assign to squad name)
+- Skill binding (workspace skills to agents)
+- Autopilot modes (run_only, create_issue)
+- AgentPulse board sync

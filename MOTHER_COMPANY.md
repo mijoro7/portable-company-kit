@@ -1,40 +1,44 @@
 # MOTHER COMPANY — A Portable Company Kit for Multica
 
-> **Status:** DRAFT (in progress). Last updated: 2026-08-04.
-> **Purpose:** A reusable recipe for spinning up an autonomous AI-run business on Multica — a known-good org chart, prompt patterns, real CLI commands, and the gotchas we've already paid for. Anyone (human or AI agent) should be able to clone this, change a few variables, and be running a 5-agent company end-to-end inside an hour.
+> **Status:** v0.5.0. Last updated: 2026-08-05.
+> **Purpose:** A reusable recipe for spinning up an autonomous AI-run business on Multica — a known-good org chart, prompt patterns, real CLI commands, and the gotchas we've already paid for. Anyone (human or AI agent) should be able to clone this, change a few variables, and be running a 6-agent company end-to-end inside an hour.
 > **Naming:** "Mother Company" is the family name; the kit itself is also called "Portable Company" or "AI Business-in-a-Box". Pick one for the public name later.
 
 ---
 
 ## 0. What this kit gives you
 
-- **5 agents** on a shared workspace: 1 CEO + 4 department leads (Growth, Sales, Product, Success). CEO is an orchestrator, **not** a doer.
+- **6 agents** on a shared workspace: 1 CEO + 1 Chief-of-Staff + 4 department leads (Growth, Sales, Product, Success). CEO is an orchestrator, **not** a doer. Chief-of-Staff recruits specialists from the upstream pool when needed.
 - **4 squads** (one per department). Each squad has exactly one member (the dept lead). Squads exist so a future hire slots in without renaming people.
 - **Stable skill binding** per agent (workspace skill → agent assignment) so voice/rulepacks auto-load every run.
 - **Autopilots** for daily/weekly rituals (standups, follow-ups, dashboards) that have NO associated issue — pure run_only.
-- **One-way Multica → AgentPulse board sync** via `dist/sync-multica-to-agentpulse.py`. Re-runnable; de-dupes by title; moves existing tasks if their Multica status changes.
+- **One-way Multica → AgentPulse board sync** via `dist/sync-multica-to-agentpulse.py`. Re-runnable; de-dupes by title; moves existing tasks if their status changes.
 - **Audit trail** on every issue via threaded comments. One issue = one ticket, with multiple comment threads if needed. Sub-issues only for genuine parallel tracks.
 - **A reviewer loop**: only the CEO marks `done`. Leads mark `in_review` and @-mention CEO.
+- **Upstream specialist pool**: Access to 250+ specialist personas from [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents) via the Chief-of-Staff.
 
 ## 1. Prerequisites
 
 | What | Why | Notes |
 |---|---|---|
 | Multica workspace | Holds the company | 1 workspace per company. NOT 1 per agent. |
-| OpenClaw runtime | Executes agents | Use UUID, not name (two CEOs may exist if you also have Claude runtime). |
+| Runtime (OpenClaw, Claude, or Ollama) | Executes agents | Multica auto-detects your runtime. Use UUID, not name (two CEOs may exist if you also have Claude runtime). |
 | A Linux box with `multica` CLI | You (the human) drive setup | The `multica` binary ships with the daemon. |
-| `~/.local/bin/openclaw` wrapper | Bypass MUL-5467 (5s `openclaw config file` hardcoded timeout) | See Gotcha G3. |
-| systemd --user service `multica-daemon` | Survive session restarts | See Gotcha G4. |
+| `~/.local/bin/openclaw` wrapper | Bypass MUL-5467 (5s `openclaw config file` hardcoded timeout) | Only needed for OpenClaw runtime. See Gotcha G3. |
+| systemd --user service `multica-daemon` | Survives session restarts | See Gotcha G4. |
 
 ## 2. Org chart (the one we use)
 
 ```
                         CEO  (orchestrator-only)
                           │
+                   Chief-of-Staff  (agent recruiter)
+                          │
         ┌─────────────────┼─────────────────┐
    Growth Lead       Sales Lead       Product Lead      Success Lead
-   (outbound,        (pipeline,        (specs,             (onboarding,
-    content)         demos, quotes)   experiments)        retention)
+   (marketing-       (sales-          (product-          (customer-
+    growth-hacker)    outbound-         manager)           success-
+                      strategist)                          manager)
 ```
 
 Hard rules from the test company:
@@ -42,6 +46,8 @@ Hard rules from the test company:
 - Each lead does NOT do work outside their department. If a Growth task asks for sales copy the lead marks it `blocked` and comments with the right squad.
 - The "single ticket, threaded comments" rule: leads do not invent sub-issues. Comments carry the audit trail.
 - Reviewer pattern: leads flip to `in_review` only; CEO flips to `done`.
+- Chief-of-Staff does not do departmental work — only match, spawn, bind, audit, archive. It owns the `agency/` catalog and the specialist lifecycle.
+- Department leads do not interact with Chief-of-Staff directly. Only the CEO delegates recruiting work.
 
 ## 3. Variables you change
 
@@ -51,6 +57,7 @@ When cloning this kit to a new company, edit:
 |---|---|---|
 | Workspace name | `my_admin` | `multica workspace create` |
 | Workspace UUID | (assigned) | Put into the agent update commands |
+| Runtime | `auto` | `RUNTIME` in `.env` — or pass `--runtime openclaw|claude|ollama` to `install.sh` |
 | Company name ("Acme Corp") | `Bluewave Coffee Co.` | Skill: `bluewave-brand-voice` content |
 | Brand voice rules | (custom) | Skill: `bluewave-brand-voice` |
 | Standup cron time | `0 9 * * * Africa/Nairobi` | Autopilot trigger |
@@ -62,11 +69,13 @@ When cloning this kit to a new company, edit:
 ```bash
 # 0. prerequisites
 export MULTICA_WORKSPACE_ID=<ws-uuid>
-export MULTICA_TOKEN=<token>
 
-# 1. create the CEO + 4 department leads
+# 1. create the CEO + Chief-of-Staff + 4 department leads
 multica agent create --name "CEO" --runtime <runtime-id> --description "..." \
   --instructions-file ./prompts/ceo.md
+
+multica agent create --name "Chief-of-Staff" --runtime <runtime-id> \
+  --instructions-file ./prompts/chief-of-staff.md
 
 for DEPT in growth sales product success; do
   multica agent create --name "$(titlecase $DEPT) Lead" --runtime <runtime-id> \
@@ -93,12 +102,13 @@ multica autopilot trigger-add <autopilot-id> --kind schedule \
   --cron "0 9 * * *" --timezone "Africa/Nairobi"
 ```
 
-Total operations: ~12. Time: <5 min after the prompts exist.
+Total operations: ~13. Time: <5 min after the prompts exist.
 
 ## 5. Canonical prompts (the actual files)
 
 Each prompt lives at `./prompts/<role>.md` in this repo. See:
 - `prompts/ceo.md`
+- `prompts/chief-of-staff.md`
 - `prompts/growth-lead.md`
 - `prompts/sales-lead.md`
 - `prompts/product-lead.md`
@@ -169,6 +179,7 @@ Mention syntax: `[@Name](mention://agent/<uuid>)` on its own line.
 
 ### G3. `openclaw config file` hardcoded 5s timeout (MUL-5467)
 The Multica daemon shells out to `openclaw config file` to discover the OpenClaw config path. It has a 5-second hardcoded timeout. On a slow node, this fails. **Workaround:** install a wrapper at `~/.local/bin/openclaw` that echoes the config path and exits in 2ms. Original goes to `~/.local/bin/openclaw.real`. Path lookup order must put `~/.local/bin` first.
+**Only applies to OpenClaw runtime.** Claude and Ollama runtimes don't use this file.
 
 ### G4. Daemon stops when session cleans up
 Run the daemon as `systemd --user` service:
@@ -219,7 +230,6 @@ Multica and AgentPulse are separate products with separate APIs. There is no nat
 - **Project management hierarchy** (projects-and-resources skill): tested lightly, not part of the standard company.
 - **Cross-workspace portability**: this kit assumes 1 workspace per company. Multi-workspace consolidation not tested.
 - **Bidirectional AgentPulse sync**: corner #6 still pending (planned).
-- **Claude runtime**: not authenticated in our environment; OpenClaw-only. If you have Claude auth, agents can also live there with the same prompts.
 - **Multi-member squads**: squads with >1 member work but weren't tested for routing (lead picks first available, no round-robin observed).
 
 ## 11. Open issue tracker
