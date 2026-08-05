@@ -54,13 +54,16 @@ for bin in curl jq python3 git systemctl; do
 done
 echo "✓ all dependencies present"
 
-# ─── 2. Install multica CLI ───────────────────────────────────────────────
+# ─── 2. Install Multica CLI (cloud client) ──────────────────────────────
 echo
-echo "═══ Step 2: multica CLI ═══"
+echo "═══ Step 2: Multica CLI (cloud client) ═══"
+echo "Note: Multica is a cloud-hosted orchestration platform."
+echo "      You'll authenticate to the cloud service after install."
+echo
 if command -v multica &>/dev/null; then
-  echo "✓ multica already installed at $(command -v multica)"
+  echo "✓ Multica CLI already installed at $(command -v multica)"
 else
-  echo "Installing multica CLI..."
+  echo "Installing Multica CLI..."
   run curl -fsSL https://multica.ai/install.sh | bash
 fi
 
