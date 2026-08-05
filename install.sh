@@ -2,27 +2,30 @@
 # install.sh — Provision a fresh VPS for running this kit.
 #
 # Usage:
-#   bash install.sh                  # install Multica + detect runtimes
-#   bash install.sh --runtime openclaw    # install with OpenClaw runtime
-#   bash install.sh --runtime claude      # install with Claude Code runtime
-#   bash install.sh --runtime ollama      # install with Ollama runtime
-#   bash install.sh --skip-runtime        # install only Multica, no runtime
-#   bash install.sh --dry-run             # preview without changes
+#   bash install.sh                         # install Multica CLI (cloud-hosted) + detect runtimes
+#   bash install.sh --self-host             # install Multica self-hosted (Docker Compose)
+#   bash install.sh --runtime openclaw      # install with OpenClaw runtime
+#   bash install.sh --runtime claude        # install with Claude Code runtime
+#   bash install.sh --runtime ollama        # install with Ollama runtime
+#   bash install.sh --skip-runtime          # install only Multica, no runtime
+#   bash install.sh --dry-run               # preview without changes
 #
 # This script is idempotent. Running it twice is safe.
 
 set -euo pipefail
 
 DRY_RUN=0
+SELF_HOST=0
 RUNTIME="${RUNTIME:-auto}"  # auto, openclaw, claude, ollama, skip
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
+    --self-host) SELF_HOST=1 ;;
     --runtime) shift; RUNTIME="${1:-auto}" ;;
     --skip-runtime) RUNTIME="skip" ;;
     -h|--help)
-      sed -n '2,20p' "$0"
+      sed -n '2,15p' "$0"
       exit 0
       ;;
     *) echo "Unknown arg: $arg"; exit 1 ;;
@@ -54,17 +57,82 @@ for bin in curl jq python3 git systemctl; do
 done
 echo "✓ all dependencies present"
 
-# ─── 2. Install Multica CLI (cloud client) ──────────────────────────────
+# ─── 2. Install Multica ─────────────────────────────────────────────────
 echo
-echo "═══ Step 2: Multica CLI (cloud client) ═══"
-echo "Note: Multica is a cloud-hosted orchestration platform."
-echo "      You'll authenticate to the cloud service after install."
-echo
-if command -v multica &>/dev/null; then
-  echo "✓ Multica CLI already installed at $(command -v multica)"
-else
+echo "═══ Step 2: Install Multica ═══"
+
+if [[ $SELF_HOST -eq 1 ]]; then
+  echo "Mode: Self-hosted (Docker Compose)"
+  echo
+  # Check for Docker
+  if ! command -v docker &>/dev/null; then
+    echo "❌ Docker is not installed. Please install Docker first."
+    echo "   Visit: https://docs.docker.com/get-docker/"
+    exit 1
+  fi
+  
+  # Check for Docker Compose
+  if ! command -v docker-compose &>/dev/null && ! docker compose version &>/dev/null 2>&1; then
+    echo "❌ Docker Compose is not installed. Please install Docker Compose first."
+    exit 1
+  fi
+  
+  echo "✓ Docker and Docker Compose detected"
+  
+  # Clone Multica repo if not exists
+  if [[ ! -d "/opt/multica" ]]; then
+    echo "Cloning Multica repository..."
+    run git clone --depth 1 https://github.com/multica-ai/multica.git /opt/multica
+  else
+    echo "✓ Multica repository already exists at /opt/multica"
+  fi
+  
+  cd /opt/multica
+  
+  # Run make selfhost
+  echo "Starting Multica self-hosted services..."
+  run make selfhost
+  
+  # Verify services are running
+  echo "Verifying services..."
+  run docker compose -f docker-compose.selfhost.yml ps
+  
+  # Wait for backend to be ready
+  echo "Waiting for backend to be ready..."
+  for i in {1..30}; do
+    if curl -fsS http://localhost:8080/readyz &>/dev/null; then
+      echo "✓ Multica self-hosted is ready at http://localhost:3000"
+      break
+    fi
+    if [[ $i -eq 30 ]]; then
+      echo "❌ Multica backend did not become ready in time"
+      exit 1
+    fi
+    sleep 2
+  done
+  
+  # Install CLI for local use
   echo "Installing Multica CLI..."
   run curl -fsSL https://multica.ai/install.sh | bash
+  
+  echo "✓ Multica self-hosted installation complete"
+  echo "  Access the web UI at: http://localhost:3000"
+  echo
+  # Configure CLI to point to self-hosted instance
+  echo "Configuring CLI for self-hosted instance..."
+  run multica config set api_url http://localhost:8080
+  
+else
+  echo "Mode: Cloud-hosted"
+  echo "Note: Multica is a cloud-hosted orchestration platform."
+  echo "      You'll authenticate to the cloud service after install."
+  echo
+  if command -v multica &>/dev/null; then
+    echo "✓ Multica CLI already installed at $(command -v multica)"
+  else
+    echo "Installing Multica CLI..."
+    run curl -fsSL https://multica.ai/install.sh | bash
+  fi
 fi
 
 # ─── 2.5. Check multica authentication ───────────────────────────────────
